@@ -1,14 +1,11 @@
-use futures::{SinkExt, StreamExt};
+use futures::StreamExt;
 use std::{collections::HashMap, sync::Arc};
 use tokio::sync::Mutex;
 
 use crate::{bc, msg};
 
 async fn event_loop(ws: warp::ws::WebSocket, bc: Arc<Mutex<bc::Broadcaster>>) {
-    let (mut tx, mut rx) = ws.split();
-    tx.send(warp::ws::Message::text("Hello!"))
-        .await
-        .expect("Failed to send 'Hello!'");
+    let (tx, mut rx) = ws.split();
     let id = { bc.lock().await.add(tx) };
     while let Some(result) = rx.next().await {
         match result {

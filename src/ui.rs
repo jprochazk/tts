@@ -1,3 +1,4 @@
+use chrono::{DateTime, Duration, Utc};
 use eframe::{egui, epi};
 use serde::{Deserialize, Serialize};
 use std::sync::{
@@ -11,8 +12,9 @@ use crate::{bc, get_html_file_path, msg};
 #[derive(Serialize, Deserialize)]
 pub struct State {
     pub token: Option<String>,
-    pub command_name: String,
     pub channel: String,
+    pub command_name: String,
+    pub command_cooldown: String,
     pub enable_tts: bool,
 }
 
@@ -20,8 +22,9 @@ impl Default for State {
     fn default() -> Self {
         State {
             token: None,
-            command_name: "tts".to_string(),
             channel: "".to_string(),
+            command_name: "tts".to_string(),
+            command_cooldown: "0".to_string(),
             enable_tts: true,
         }
     }
@@ -42,12 +45,26 @@ impl State {
         }
         State::default()
     }
-    pub fn save(&self) -> String {
-        let config = serde_json::to_string(self).expect("Failed to serialize config");
+    pub fn save(data: &str) -> String {
         format!(
             "// Do not modify this file.\nexport const Config = JSON.parse(\n`{}`\n);",
-            config
+            data
         )
+    }
+}
+
+struct Timer(DateTime<Utc>);
+impl Timer {
+    fn new() -> Timer {
+        Timer(Utc::now())
+    }
+
+    fn elapsed_milliseconds(&self, n: i64) -> bool {
+        Utc::now() - self.0 > Duration::milliseconds(n)
+    }
+
+    fn reset(&mut self) {
+        self.0 = Utc::now();
     }
 }
 
@@ -58,6 +75,8 @@ pub struct App {
     state: State,
 
     _url_text: String,
+    _clipboard_text_timer: Timer,
+    _save_text_timer: Timer,
 }
 
 impl App {
@@ -72,7 +91,10 @@ impl App {
             rt,
             bc,
             state,
+
             _url_text: get_html_file_path().display().to_string(),
+            _clipboard_text_timer: Timer::new(),
+            _save_text_timer: Timer::new(),
         }
     }
 }
@@ -101,8 +123,8 @@ const AUTH_URI: &str = concat!(
 
 impl App {
     fn save_config(&self) {
-        let config = self.state.save();
-        std::fs::write(crate::get_config_file_path(), &config)
+        let config = serde_json::to_string(&self.state).expect("Failed to serialize config");
+        std::fs::write(crate::get_config_file_path(), State::save(&config))
             .expect("Failed to write config to a file");
         self.rt.block_on(async {
             self.bc
@@ -134,12 +156,12 @@ impl epi::App for App {
 
         egui::TopBottomPanel::bottom("controls").show(ctx, |ui| {
             ui.horizontal(|ui| {
-                static LAST_CLICK: AtomicI64 = AtomicI64::new(0);
                 if ui.button("Save").clicked() {
-                    let now = chrono::Utc::now().timestamp_millis();
-                    println!("Now: {}", now);
-                    LAST_CLICK.store(now, Ordering::SeqCst);
                     self.save_config();
+                    self._save_text_timer.reset();
+                }
+                if !self._save_text_timer.elapsed_milliseconds(1500) {
+                    ui.label("🆗");
                 }
             })
         });
@@ -174,13 +196,12 @@ impl epi::App for App {
                     .hint_text("TTS command name"),
             );
 
-            if ui
-                .checkbox(&mut self.state.enable_tts, "Enable TTS Command")
-                .changed()
-            {
-                // TODO: immediately tell frontend to stop + mute any message
-                println!("Enable TTS changed");
-            }
+            ui.add(
+                egui::TextEdit::singleline(&mut self.state.command_cooldown)
+                    .hint_text("Command cooldown"),
+            );
+
+            ui.checkbox(&mut self.state.enable_tts, "Enable TTS Command");
 
             ui.separator();
 
@@ -190,10 +211,19 @@ impl epi::App for App {
                     .add(egui::TextEdit::singleline(&mut self._url_text).enabled(false))
                     .clicked()
                 {
-                    // copy to clipboard
+                    use clipboard::*;
+                    if let Result::<ClipboardContext, _>::Ok(mut ctx) = ClipboardProvider::new() {
+                        println!("{:?}", ctx.get_contents());
+                        let _ = ctx.set_contents(self._url_text.clone());
+                        self._clipboard_text_timer.reset();
+                    }
                 }
             });
-            ui.label("(click to copy)");
+            ui.label(if self._clipboard_text_timer.elapsed_milliseconds(1500) {
+                "(click to copy)"
+            } else {
+                "(copied!)"
+            });
         });
     }
 }
