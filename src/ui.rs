@@ -1,10 +1,7 @@
 use chrono::{DateTime, Duration, Utc};
 use eframe::{egui, epi};
 use serde::{Deserialize, Serialize};
-use std::sync::{
-    atomic::{AtomicI64, Ordering},
-    Arc,
-};
+use std::sync::Arc;
 use tokio::sync::Mutex;
 
 use crate::{bc, get_html_file_path, msg};
