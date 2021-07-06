@@ -1,0 +1,8 @@
+<!DOCTYPE html><html><head><title>Access Token</title></head><body><div id="error"></div><script>
+var access_token = window.location.hash.substring(1).split('&')[0]?.split("=")[1];
+if (access_token) {
+    window.location.replace("http://localhost:3030/twitch_response/" + access_token);
+} else {
+    document.getElementById("error").innerText = "Authentication failed, error output into the application window.";
+}
+</script></body></html>
