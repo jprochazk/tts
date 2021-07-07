@@ -1,19 +1,11 @@
-use std::net::TcpListener;
-use std::time::Duration;
+use std::{sync::Arc, time::Duration};
 
-use actix_http::http;
-use actix_web::{dev::Server, web, App, HttpRequest, HttpResponse, HttpServer};
-use awc::Client;
+use reqwest::Client;
 use serde::{Deserialize, Serialize};
-
-use context::*;
-
+use tracing::{debug, info};
+use warp::{Filter, Reply};
 pub mod config;
-mod context;
-mod speakers;
 
-/// The maximum length of a tts message in bytes.
-pub const MAX_TTS_MESSAGE_LENGTH: usize = 500;
 /// The URL of the actual TTS API.
 pub const API_URL: &str = "https://mumble.stream/speak";
 
@@ -31,120 +23,103 @@ pub struct TtsRequest {
 #[derive(Serialize, Deserialize)]
 pub struct ErrorResponse<S: AsRef<str>> {
     pub error: S,
+    pub retries: u8,
 }
 
-/// Runs the application using the supplied configuration.
-pub fn run(config: config::Config, listener: TcpListener) -> Result<Server, std::io::Error> {
-    let ctx = web::Data::new(ProxyContext::new(config));
-    let server = HttpServer::new(move || {
-        App::new()
-            .app_data(ctx.clone())
-            .route("/health_check", web::get().to(health_check))
-            .route("/speak", web::post().to(speak))
-    })
-    .listen(listener)?
-    .run();
-    Ok(server)
-}
+async fn speak(
+    request: TtsRequest,
+    client: reqwest::Client,
+    config: Arc<config::Config>,
+) -> Result<impl warp::Reply, warp::Rejection> {
+    info!("Received a new proxy request: {:#?}", request);
+    let mut last_error = None;
 
-/// A heartbeat endpoint that always returns 200 OK.
-async fn health_check() -> HttpResponse {
-    HttpResponse::Ok().finish()
-}
+    for i in 0..config.retry_attempts.get() {
+        debug!(
+            "[{} / {}] Forwarding the request ...",
+            i + 1,
+            config.retry_attempts
+        );
+        let response = match client.post(&config.api_url).json(&request).send().await {
+            Ok(resp) => resp,
+            Err(e) => {
+                // Retry on connection errors.
+                debug!(
+                    "[{} / {}] Failed to receive a response: {}",
+                    i, config.retry_attempts, e
+                );
+                last_error = Some(e.to_string());
+                continue;
+            }
+        };
+        info!(
+            "[{} / {}] Received a response from the server; STATUS = {}",
+            i + 1,
+            config.retry_attempts,
+            response.status()
+        );
+        debug!("{:#?}", response);
 
-// TODO: check if remote_addr() and realip_remote_addre() are subject to spoofing.
-/// A reverse-proxy-style endpoint that accepts a TTS request, validates it, and forwards to the vo.codes TTS API. The response from the API is streamed back to the client.
-/// This endpoint mirrors the original API, and thus could be potentially used as a drop-in replacement.
-///
-/// Every client connection must be identifiable by IP in order to enforce rate-limiting. If the limit is reached, the server will pause the future until the quota is restored.
-/// Additionally, there is a global limit on the number of concurrent connections. If this limit is reached, the client will be immediately rejected with a Retry-After header
-/// set to the number of seconds after which the client may retry.
-async fn speak(req: HttpRequest, payload: web::Json<TtsRequest>, ctx: CtxData) -> HttpResponse {
-    println!(
-        "Received a request from {:?}: {:#?}",
-        req.connection_info().remote_addr(),
-        payload
-    );
-
-    // Make sure that the client has supplied an actual remote IP address.
-    let conn = req.connection_info();
-    let ip = match conn.remote_addr() {
-        Some(ip) => ip,
-        None => {
-            return HttpResponse::build(http::StatusCode::BAD_REQUEST).json(ErrorResponse {
-                error: "Couldn't determine remote IP",
-            });
+        // Retry on server errors.
+        if response.status().is_server_error() {
+            info!(
+                "[{} / {}] Response wasn't a success, retrying",
+                i + 1,
+                config.retry_attempts
+            );
+            last_error = Some(format!(
+                "HTTP {} - {}",
+                response.status(),
+                response
+                    .text()
+                    .await
+                    .unwrap_or_else(|_| "<no response body>".to_string())
+            ));
+            continue;
         }
-    };
 
-    // Validate the request before checking the quota to avoid blocking the client for no reason.
-    let message = clean_tts_message(&payload.text);
-    if message.is_empty() || message.len() > MAX_TTS_MESSAGE_LENGTH {
-        return HttpResponse::build(http::StatusCode::BAD_REQUEST).json(ErrorResponse {
-            error: format!(
-                "The tts message must be between 1 and 500 characters, but was {}",
-                message.len()
-            ),
-        });
+        // Otherwise, re-broadcast the response.
+        let (headers, status) = (response.headers().clone(), response.status());
+        let body = warp::hyper::Body::wrap_stream(response.bytes_stream());
+        let mut response = warp::reply::Response::new(body);
+        *response.headers_mut() = headers;
+        *response.status_mut() = status;
+        return Ok(response);
     }
 
-    let speaker_id = match speakers::TTS.get_speaker_id(&payload.speaker[..]) {
-        Some(id) => id,
-        None => {
-            return HttpResponse::build(http::StatusCode::NOT_FOUND).json(ErrorResponse {
-                error: format!("Unknown speaker: `{}`", payload.speaker),
-            });
-        }
-    };
-
-    // QQQ: Is there a way avoid this allocation?
-    // Attempt to accommodate the request given that the both the user and global quotas allow.
-    let _guard = match ctx.try_accommodate_request(ip.to_owned()).await {
-        Some(guard) => guard,
-        None => {
-            return HttpResponse::build(http::StatusCode::SERVICE_UNAVAILABLE)
-            .insert_header(("Retry-After", "1"))
-            .json(ErrorResponse { error: "The service is currently overloaded. Please re-submit your request after Retry-After seconds." });
-        }
-    };
-
-    let response = match Client::builder()
-        .timeout(Duration::from_secs(ctx.config.api_timeout_seconds as _))
-        .finish()
-        .post(&ctx.config.api_url)
-        .send_json(&TtsRequest {
-            text: message,
-            speaker: speaker_id.to_string(),
-        })
-        .await
-    {
-        Ok(resp) => resp,
-        Err(e) => {
-            eprintln!("error: {}", e);
-            return HttpResponse::build(http::StatusCode::INTERNAL_SERVER_ERROR).json(
-                ErrorResponse {
-                    error: format!(
-                        "Failed to receive or parse the response from the API: {}",
-                        e
-                    ),
-                },
-            );
-        }
-    };
-
-    HttpResponse::build(response.status()).streaming(response)
+    info!("All attempts to fullfil the request have been exhausted, issuing a rejection.",);
+    let mut response = warp::reply::json(&ErrorResponse {
+        error: format!(
+            "Failed to process the request: `{}`",
+            last_error.expect("Reached")
+        ),
+        retries: config.retry_attempts.get(),
+    })
+    .into_response();
+    *response.status_mut() = warp::http::StatusCode::INTERNAL_SERVER_ERROR;
+    Ok(response)
 }
 
-/// Cleans the given TTS message, removing any non-ascii-alphanumeric characters with the exception of ascii whitespace and certain punctuation (`,.?!$'`).
-fn clean_tts_message(message: &str) -> String {
-    message
-        .replace(|c: char| c.is_ascii_whitespace(), " ")
-        .chars()
-        .filter(|c| {
-            c.is_ascii_digit()
-                || c.is_ascii_alphabetic()
-                || c.is_ascii_whitespace()
-                || [',', '.', '!', '?', '$', '\''].contains(c)
-        })
-        .collect::<String>()
+pub async fn start(config: config::Config) {
+    let client = Client::builder()
+        .timeout(Duration::from_secs(config.api_timeout_seconds as _))
+        .build()
+        .unwrap();
+    let client = warp::any().map(move || client.clone());
+
+    let port = config.port;
+    let config = Arc::new(config);
+    let config = warp::any().map(move || config.clone());
+
+    let health_check = warp::path("health_check").map(warp::reply);
+    let speak = warp::path("speak")
+        .and(warp::post())
+        .and(warp::body::json())
+        .and(client)
+        .and(config)
+        .and_then(speak);
+
+    warp::serve(health_check.or(speak))
+        .run(([127u8, 0, 0, 1], port))
+        .await;
 }
