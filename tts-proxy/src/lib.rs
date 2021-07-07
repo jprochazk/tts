@@ -1,10 +1,9 @@
 use std::net::TcpListener;
 use std::time::Duration;
 
-use actix_web::client::Client;
-use actix_web::dev::Server;
-use actix_web::http;
-use actix_web::{web, App, HttpRequest, HttpResponse, HttpServer};
+use actix_http::http;
+use actix_web::{dev::Server, web, App, HttpRequest, HttpResponse, HttpServer};
+use awc::Client;
 use serde::{Deserialize, Serialize};
 
 use context::*;
@@ -14,31 +13,29 @@ mod context;
 mod speakers;
 
 /// The maximum length of a tts message in bytes.
-const MAX_TTS_MESSAGE_LENGTH: usize = 500;
+pub const MAX_TTS_MESSAGE_LENGTH: usize = 500;
 /// The URL of the actual TTS API.
-const API_URL: &str = "https://mumble.stream/speak";
+pub const API_URL: &str = "https://mumble.stream/speak";
 
 /// This struct is used for receiving and forwarding TTS requests.
 /// The struct follows the schema of the original API.
 #[derive(Debug, Clone, Deserialize, Serialize)]
-struct TtsRequest {
+pub struct TtsRequest {
     /// The text to say.
-    text: String,
+    pub text: String,
     /// The name of the speaker to use.
-    speaker: String,
+    pub speaker: String,
 }
 
 /// A helper struct for returning JSON error responses.
-#[derive(Serialize)]
-struct ErrorResponse<S: AsRef<str>> {
-    error: S,
+#[derive(Serialize, Deserialize)]
+pub struct ErrorResponse<S: AsRef<str>> {
+    pub error: S,
 }
 
 /// Runs the application using the supplied configuration.
-pub fn run(config: config::Config) -> Result<Server, std::io::Error> {
-    let address = format!("127.0.0.1:{}", config.port);
-    let listener = TcpListener::bind(address)?;
-    let ctx = web::Data::new(ProxyContext::default());
+pub fn run(config: config::Config, listener: TcpListener) -> Result<Server, std::io::Error> {
+    let ctx = web::Data::new(ProxyContext::new(config));
     let server = HttpServer::new(move || {
         App::new()
             .app_data(ctx.clone())
@@ -90,11 +87,12 @@ async fn speak(req: HttpRequest, payload: web::Json<TtsRequest>, ctx: CtxData) -
             ),
         });
     }
+
     let speaker_id = match speakers::TTS.get_speaker_id(&payload.speaker[..]) {
         Some(id) => id,
         None => {
             return HttpResponse::build(http::StatusCode::NOT_FOUND).json(ErrorResponse {
-                error: format!("Unknown speaker: {}", payload.speaker),
+                error: format!("Unknown speaker: `{}`", payload.speaker),
             });
         }
     };
@@ -105,7 +103,7 @@ async fn speak(req: HttpRequest, payload: web::Json<TtsRequest>, ctx: CtxData) -
         Some(guard) => guard,
         None => {
             return HttpResponse::build(http::StatusCode::SERVICE_UNAVAILABLE)
-            .set_header("Retry-After", "1")
+            .insert_header(("Retry-After", "1"))
             .json(ErrorResponse { error: "The service is currently overloaded. Please re-submit your request after Retry-After seconds." });
         }
     };
@@ -113,7 +111,7 @@ async fn speak(req: HttpRequest, payload: web::Json<TtsRequest>, ctx: CtxData) -
     let response = match Client::builder()
         .timeout(Duration::from_secs(ctx.config.api_timeout_seconds as _))
         .finish()
-        .post(API_URL)
+        .post(&ctx.config.api_url)
         .send_json(&TtsRequest {
             text: message,
             speaker: speaker_id.to_string(),
@@ -125,7 +123,10 @@ async fn speak(req: HttpRequest, payload: web::Json<TtsRequest>, ctx: CtxData) -
             eprintln!("error: {}", e);
             return HttpResponse::build(http::StatusCode::INTERNAL_SERVER_ERROR).json(
                 ErrorResponse {
-                    error: "Failed to receive or parse the response from the API",
+                    error: format!(
+                        "Failed to receive or parse the response from the API: {}",
+                        e
+                    ),
                 },
             );
         }
