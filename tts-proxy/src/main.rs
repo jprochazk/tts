@@ -1,10 +1,24 @@
-use std::net::TcpListener;
+use clap::Clap;
+use tts_proxy::start;
 
-use tts_proxy::run;
-
-#[actix_web::main]
+#[tokio::main]
 async fn main() -> std::io::Result<()> {
-    let address = format!("127.0.0.1:{}", 8080);
-    let listener = TcpListener::bind(address)?;
-    run(tts_proxy::config::Config::default(), listener)?.await
+    let mut config = tts_proxy::config::Config::parse();
+
+    if let Some(directory) = config.log_directory.take() {
+        let file_appender = tracing_appender::rolling::never(directory, "tts-proxy.log");
+        let (non_blocking, _guard) = tracing_appender::non_blocking(file_appender);
+
+        let filter = std::env::var("RUST_LOG").unwrap_or_else(|_| "info".to_owned());
+        tracing_subscriber::fmt()
+            .with_env_filter(filter)
+            .with_writer(non_blocking)
+            .init();
+    } else {
+        let filter = std::env::var("RUST_LOG").unwrap_or_else(|_| "none".to_owned());
+        tracing_subscriber::fmt().with_env_filter(filter).init();
+    }
+
+    start(config).await;
+    Ok(())
 }

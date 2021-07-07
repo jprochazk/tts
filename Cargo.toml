@@ -1,3 +1,5 @@
+cargo-features = ["strip"]
+
 [package]
 name = "gui"
 version = "0.1.0"
@@ -29,3 +31,8 @@ clipboard = "0.5.0"
 
 [target.'cfg(windows)'.build-dependencies]
 winres = "0.1"
+
+
+[profile.release]
+strip = true
+
