@@ -5,12 +5,18 @@ mod msg;
 mod server;
 mod ui;
 
-use std::{path::PathBuf, sync::Arc};
+use std::{os::unix::prelude::PermissionsExt, path::PathBuf, sync::Arc};
 
 use anyhow::Result;
 use bc::Broadcaster;
 use tokio::sync::Mutex;
 use ui::State;
+
+#[cfg(target_family = "unix")]
+pub static PROXY_BINARY: &[u8] = include_bytes!("../target/release/obs-tts-proxy");
+
+#[cfg(target_family = "windows")]
+pub static PROXY_BINARY: &[u8] = include_bytes!("..\\target\\release\\obs-tts-proxy.exe");
 
 pub fn get_config_dir_path() -> PathBuf {
     let mut path = home::home_dir().expect("Failed to access CWD");
@@ -36,6 +42,16 @@ pub fn get_html_file_path() -> PathBuf {
     path
 }
 
+fn get_proxy_binary_path() -> PathBuf {
+    let mut path = get_config_dir_path();
+    path.push(if cfg!(target_os = "windows") {
+        "obs-tts-proxy.exe"
+    } else {
+        "obs-tts-proxy"
+    });
+    path
+}
+
 fn load_state() -> State {
     if let Ok(file) = std::fs::read_to_string(get_config_file_path()) {
         State::load(file)
@@ -46,11 +62,33 @@ fn load_state() -> State {
 
 fn init_config_dir() {
     let path = get_config_dir_path();
+
     if !path.exists() {
-        std::fs::create_dir(path).unwrap();
+        std::fs::create_dir(&path).unwrap();
     }
 
     std::fs::write(get_html_file_path(), include_str!("./tts.html")).unwrap();
+
+    let version_path = path.join("version.txt");
+    let version =
+        std::fs::read_to_string(&version_path).unwrap_or_else(|_| "<not-present>".to_string());
+
+    let binary = get_proxy_binary_path();
+    if !binary.exists() || version != env!("CARGO_PKG_VERSION") {
+        std::fs::write(&binary, PROXY_BINARY).unwrap();
+
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
+        {
+            let mut perms = std::fs::metadata(&binary).unwrap().permissions();
+            // 7 = read, write, execute (owner)
+            // 5 = read, execute (group)
+            // 5 = read, execute (other)
+            perms.set_mode(0o755);
+            std::fs::set_permissions(binary, perms).expect("Failed to make the proxy executable.");
+        }
+    }
+
+    std::fs::write(version_path, env!("CARGO_PKG_VERSION")).unwrap();
 }
 
 fn init_panic_hook() {
