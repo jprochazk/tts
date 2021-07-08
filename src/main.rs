@@ -2,6 +2,7 @@
 
 mod bc;
 mod msg;
+mod proxy;
 mod server;
 mod ui;
 
@@ -9,6 +10,7 @@ use std::{os::unix::prelude::PermissionsExt, path::PathBuf, sync::Arc};
 
 use anyhow::Result;
 use bc::Broadcaster;
+use proxy::start_proxy_control_thread;
 use tokio::sync::Mutex;
 use ui::State;
 
@@ -147,7 +149,13 @@ fn main() -> Result<()> {
             })
         }
     });
-    ui::start(rt, msg_recv, broadcaster, state);
+    ui::start(
+        rt.clone(),
+        msg_recv,
+        broadcaster,
+        state,
+        start_proxy_control_thread(rt, 3031),
+    );
 
     stop.send(()).unwrap();
     server.join().unwrap().unwrap();
