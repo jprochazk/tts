@@ -4,7 +4,8 @@ use tts_proxy::start;
 fn main() -> std::io::Result<()> {
     let config = tts_proxy::config::Config::parse();
 
-    if cfg!(target_family = "unix") && config.daemonize {
+    #[cfg(target_family = "unix")]
+    if config.daemonize {
         match fork::daemon(false, true) {
             Ok(fork::Fork::Child) => (), // We're in the granchild process, do nothing
             Ok(_) => {
