@@ -22,3 +22,6 @@ tracing = "0.1.26"
 tracing-appender = "0.1.2"
 tracing-subscriber = "0.2.19"
 
+[target.'cfg(unix)'.dependencies]
+fork = "0.1.18"
+

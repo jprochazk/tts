@@ -21,6 +21,9 @@ pub struct Config {
     /// The path to the directory to store the logs in.
     #[clap(short, long, name = "PATH")]
     pub log_directory: Option<String>,
+    /// Start the proxy as a daemon.
+    #[clap(short, long)]
+    pub daemonize: bool,
 }
 
 impl Default for Config {
@@ -31,6 +34,7 @@ impl Default for Config {
             retry_attempts: NonZeroU8::new(3).unwrap(),
             api_timeout_seconds: 180,
             log_directory: None,
+            daemonize: false,
         }
     }
 }
