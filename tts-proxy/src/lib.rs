@@ -1,7 +1,8 @@
 use std::{sync::Arc, time::Duration};
 
-use reqwest::Client;
+use reqwest::{Client, StatusCode};
 use serde::{Deserialize, Serialize};
+use tokio::sync::{oneshot, Mutex};
 use tracing::{debug, info};
 use warp::{Filter, Reply};
 pub mod config;
@@ -96,8 +97,22 @@ async fn speak(
         retries: config.retry_attempts.get(),
     })
     .into_response();
-    *response.status_mut() = warp::http::StatusCode::INTERNAL_SERVER_ERROR;
+    *response.status_mut() = StatusCode::INTERNAL_SERVER_ERROR;
     Ok(response)
+}
+
+async fn shutdown(
+    tx: Arc<Mutex<Option<oneshot::Sender<()>>>>,
+) -> Result<impl warp::Reply, warp::Rejection> {
+    info!("Received a shutdown request.");
+    let tx = tx.lock().await.take();
+    if let Some(tx) = tx {
+        tx.send(())
+            .expect("Failed to shutdown the server, unexpectedly");
+        Ok(StatusCode::OK)
+    } else {
+        Ok(StatusCode::ACCEPTED)
+    }
 }
 
 pub async fn start(config: config::Config) {
@@ -111,6 +126,10 @@ pub async fn start(config: config::Config) {
     let config = Arc::new(config);
     let config = warp::any().map(move || config.clone());
 
+    let (tx, rx) = oneshot::channel::<()>();
+    let tx = Arc::new(Mutex::new(Some(tx)));
+    let tx = warp::any().map(move || tx.clone());
+
     let health_check = warp::path("health_check").map(warp::reply);
     let speak = warp::path("speak")
         .and(warp::post())
@@ -118,8 +137,12 @@ pub async fn start(config: config::Config) {
         .and(client)
         .and(config)
         .and_then(speak);
+    let shutdown = warp::path("shutdown").and(tx).and_then(shutdown);
 
-    warp::serve(health_check.or(speak))
-        .run(([127u8, 0, 0, 1], port))
+    warp::serve(health_check.or(speak).or(shutdown))
+        .bind_with_graceful_shutdown(([127u8, 0, 0, 1], port), async {
+            rx.await.ok();
+        })
+        .1
         .await;
 }
