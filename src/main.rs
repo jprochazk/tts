@@ -14,20 +14,24 @@ use ui::State;
 
 pub fn get_config_dir_path() -> PathBuf {
     let mut path = home::home_dir().expect("Failed to access CWD");
-    path.push(".obs_tts_config");
+    // Use the .config directory convention if it is present.
+    if path.join(".config").exists() {
+        path.push(".config");
+        path.push("obs_tts_config");
+    } else {
+        path.push(".obs_tts_config");
+    }
     path
 }
 
 pub fn get_config_file_path() -> PathBuf {
-    let mut path = home::home_dir().expect("Failed to access CWD");
-    path.push(".obs_tts_config");
+    let mut path = get_config_dir_path();
     path.push("config.js");
     path
 }
 
 pub fn get_html_file_path() -> PathBuf {
-    let mut path = home::home_dir().expect("Failed to access CWD");
-    path.push(".obs_tts_config");
+    let mut path = get_config_dir_path();
     path.push("tts.html");
     path
 }
