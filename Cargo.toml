@@ -19,7 +19,13 @@ home = "0.5.3"
 chrono = "0.4"
 backtrace = "0.3.60"
 lazy_static = "1.4.0"
-clipboard = "0.5.0"
+rodio = "0.14.0"
+twitch = { git = "https://github.com/jprochazk/twitch-rs" }
+governor = "0.3.2"
+censor = "0.2.0"
+log = "0.4.14"
+reqwest = { version = "0.11.4", features = ["json"] }
+env_logger = "0.8.4"
 
 [target.'cfg(windows)'.build-dependencies]
 winres = "0.1"

@@ -3,6 +3,8 @@
 mod bc;
 mod msg;
 mod server;
+mod speakers;
+mod tts;
 mod ui;
 
 use std::{path::PathBuf, sync::Arc};
@@ -14,21 +16,19 @@ use ui::State;
 
 pub fn get_config_dir_path() -> PathBuf {
     let mut path = home::home_dir().expect("Failed to access CWD");
-    path.push(".obs_tts_config");
+    // Use the .config directory convention if it is present.
+    if cfg!(target_family = "unix") && path.join(".config").exists() {
+        path.push(".config");
+        path.push("obs_tts_config");
+    } else {
+        path.push(".obs_tts_config");
+    }
     path
 }
 
 pub fn get_config_file_path() -> PathBuf {
-    let mut path = home::home_dir().expect("Failed to access CWD");
-    path.push(".obs_tts_config");
+    let mut path = get_config_dir_path();
     path.push("config.js");
-    path
-}
-
-pub fn get_html_file_path() -> PathBuf {
-    let mut path = home::home_dir().expect("Failed to access CWD");
-    path.push(".obs_tts_config");
-    path.push("tts.html");
     path
 }
 
@@ -43,10 +43,8 @@ fn load_state() -> State {
 fn init_config_dir() {
     let path = get_config_dir_path();
     if !path.exists() {
-        std::fs::create_dir(path).unwrap();
+        std::fs::create_dir(&path).unwrap();
     }
-
-    std::fs::write(get_html_file_path(), include_str!("./tts.html")).unwrap();
 }
 
 fn init_panic_hook() {
@@ -81,9 +79,12 @@ fn init_panic_hook() {
 fn main() -> Result<()> {
     init_panic_hook();
     init_config_dir();
+    env_logger::init();
+
     let state = load_state();
     let broadcaster = Arc::new(Mutex::new(Broadcaster::default()));
-    let (stop, stop_recv) = tokio::sync::oneshot::channel::<()>();
+    let (stop_server_tx, stop_server_rx) = tokio::sync::oneshot::channel::<()>();
+    let (stop_tts_tx, stop_tts_rx) = tokio::sync::mpsc::channel::<()>(1);
     let (msg_send, msg_recv) = msg::channel();
 
     let rt = Arc::new(
@@ -96,19 +97,32 @@ fn main() -> Result<()> {
         let broadcaster = broadcaster.clone();
         let rt = rt.clone();
         move || {
+            log::info!("Started the authentication thread.");
             rt.block_on(async {
                 tokio::select! {
                     _ = server::start(msg_send, broadcaster) => {}
-                    _ = stop_recv => {}
+                    _ = stop_server_rx => {}
                 }
-                Result::<()>::Ok(())
             })
         }
     });
-    ui::start(rt, msg_recv, broadcaster, state);
 
-    stop.send(()).unwrap();
-    server.join().unwrap().unwrap();
+    // QQQ: how should we handle the absence of the default output device?
+    let (_stream, stream_handle) =
+        rodio::OutputStream::try_default().expect("Couldn't connect to the default output device");
+    let sink = rodio::Sink::try_new(&stream_handle).unwrap();
+    sink.pause(); // pause by default
+
+    let tts_context = Arc::new(tts::TtsContext::new(sink));
+    let tts = tts::start_tts_thread(tts_context.clone(), rt.clone(), stop_tts_rx);
+
+    ui::start(rt, tts_context, msg_recv, broadcaster, state);
+
+    stop_server_tx.send(()).unwrap();
+    let _ = stop_tts_tx.try_send(()); // we don't care if the thread has panicked
+
+    server.join().unwrap();
+    tts.join().unwrap();
 
     Ok(())
 }

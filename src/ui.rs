@@ -4,15 +4,16 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
-use crate::{bc, get_html_file_path, msg};
+use crate::{bc, msg};
 
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct State {
     pub token: Option<String>,
     pub channel: String,
     pub command_name: String,
     pub command_cooldown: String,
     pub enable_tts: bool,
+    pub pause_tts_queue: bool,
 }
 
 impl Default for State {
@@ -23,6 +24,7 @@ impl Default for State {
             command_name: "tts".to_string(),
             command_cooldown: "0".to_string(),
             enable_tts: true,
+            pause_tts_queue: false,
         }
     }
 }
@@ -66,12 +68,13 @@ impl Timer {
 }
 
 pub struct App {
-    msg: msg::Receiver,
     rt: Arc<tokio::runtime::Runtime>,
+    tts: crate::tts::TtsCtx,
+    msg: msg::Receiver,
     bc: Arc<Mutex<bc::Broadcaster>>,
     state: State,
 
-    _url_text: String,
+    _channel_name_timer: Option<Timer>,
     _clipboard_text_timer: Timer,
     _save_text_timer: Timer,
 }
@@ -79,17 +82,19 @@ pub struct App {
 impl App {
     pub fn new(
         rt: Arc<tokio::runtime::Runtime>,
+        tts: crate::tts::TtsCtx,
         msg: msg::Receiver,
         bc: Arc<Mutex<bc::Broadcaster>>,
         state: State,
     ) -> App {
         App {
-            msg,
             rt,
+            tts,
+            msg,
             bc,
             state,
 
-            _url_text: get_html_file_path().display().to_string(),
+            _channel_name_timer: None,
             _clipboard_text_timer: Timer::new(),
             _save_text_timer: Timer::new(),
         }
@@ -182,39 +187,89 @@ impl epi::App for App {
 
             ui.separator();
 
-            if ui
-                .add(egui::TextEdit::singleline(&mut self.state.channel).hint_text("Channel name"))
-                .changed()
-            {
-                self.state.channel.truncate(128);
-            }
-            ui.add(
-                egui::TextEdit::singleline(&mut self.state.command_name)
-                    .hint_text("TTS command name"),
-            );
+            ui.horizontal(|ui| {
+                ui.vertical(|ui| {
+                    if ui
+                        .add(
+                            egui::TextEdit::singleline(&mut self.state.channel)
+                                .hint_text("Channel name"),
+                        )
+                        .changed()
+                    {
+                        self.state.channel.truncate(128);
+                        if !self.state.channel.is_empty() {
+                            self._channel_name_timer = Some(Timer::new());
+                        }
+                    }
 
-            ui.add(
-                egui::TextEdit::singleline(&mut self.state.command_cooldown)
-                    .hint_text("Command cooldown"),
-            );
+                    if self
+                        ._channel_name_timer
+                        .as_ref()
+                        .map(|t| t.elapsed_milliseconds(1000))
+                        .unwrap_or(false)
+                    {
+                        self.tts.update_tts_config(self.state.clone());
+                        self._channel_name_timer = None;
+                    }
 
-            ui.checkbox(&mut self.state.enable_tts, "Enable TTS Command");
+                    if ui
+                        .add(
+                            egui::TextEdit::singleline(&mut self.state.command_name)
+                                .hint_text("TTS command name"),
+                        )
+                        .changed()
+                        && self.state.enable_tts
+                    {
+                        self.tts.update_tts_config(self.state.clone());
+                    }
+
+                    ui.add(
+                        egui::TextEdit::singleline(&mut self.state.command_cooldown)
+                            .hint_text("Command cooldown"),
+                    );
+
+                    if ui
+                        .checkbox(&mut self.state.enable_tts, "Enable TTS Command")
+                        .changed()
+                    {
+                        self.tts.update_tts_config(self.state.clone());
+                    }
+                });
+
+                ui.separator();
+
+                ui.vertical_centered_justified(|ui| {
+                    ui.heading(format!("TTS Queue ({} pending)", self.tts.queue.len()));
+
+                    // Play/Pause
+                    let is_paused = self.tts.queue.is_paused(); // an atomic load, so it's okay to call in the ui loop
+                    if ui
+                        .button(if is_paused {
+                            "Resume TTS ▶"
+                        } else {
+                            "Pause TTS ⏸"
+                        })
+                        .clicked()
+                    {
+                        if is_paused {
+                            self.tts.queue.play();
+                        } else {
+                            self.tts.queue.pause();
+                        }
+                    }
+
+                    ui.separator();
+
+                    if ui.button("Stop TTS ⏹").clicked() {
+                        self.tts.queue.stop();
+                    }
+                });
+            });
 
             ui.separator();
 
             ui.horizontal(|ui| {
-                ui.label("File URL:");
-                if ui
-                    .add(egui::TextEdit::singleline(&mut self._url_text).enabled(false))
-                    .clicked()
-                {
-                    use clipboard::*;
-                    if let Result::<ClipboardContext, _>::Ok(mut ctx) = ClipboardProvider::new() {
-                        println!("{:?}", ctx.get_contents());
-                        let _ = ctx.set_contents(self._url_text.clone());
-                        self._clipboard_text_timer.reset();
-                    }
-                }
+                ui.label("TODO: bannedwords.txt checkbox");
             });
             ui.label(if self._clipboard_text_timer.elapsed_milliseconds(1500) {
                 "(click to copy)"
@@ -227,12 +282,14 @@ impl epi::App for App {
 
 pub fn start(
     rt: Arc<tokio::runtime::Runtime>,
+    tts: crate::tts::TtsCtx,
     msg: msg::Receiver,
     bc: Arc<Mutex<bc::Broadcaster>>,
     state: State,
 ) {
+    log::info!("Started the ui thread.");
     eframe::run_native(
-        Box::new(App::new(rt, msg, bc, state)),
+        Box::new(App::new(rt, tts, msg, bc, state)),
         eframe::NativeOptions {
             initial_window_size: Some(egui::Vec2::new(400., 350.)),
             ..Default::default()
