@@ -11,6 +11,7 @@ use twitch::Message;
 
 use crate::ui;
 
+//
 pub const TTS_REQUESTS_PER_MINUTE: u32 = 5;
 pub const RETRY_ATTEMPTS: u8 = 3;
 pub const API_TIMEOUT_SECONDS: u64 = 180;
@@ -25,7 +26,7 @@ pub struct TtsContext {
         governor::state::InMemoryState,
         governor::clock::DefaultClock,
     >,
-    pub banned_words: std::sync::Mutex<censor::Censor>,
+    pub banned_words: tokio::sync::Mutex<censor::Censor>,
     pub queue: rodio::Sink,
     state_tx: Sender<ui::State>,
     state_rx: Receiver<ui::State>,
@@ -38,8 +39,8 @@ impl TtsContext {
         Self {
             tts_limit: governor::RateLimiter::direct(governor::Quota::per_minute(
                 NonZeroU32::new(TTS_REQUESTS_PER_MINUTE).unwrap(),
-            )), // 2 seconds
-            banned_words: std::sync::Mutex::new(
+            )),
+            banned_words: tokio::sync::Mutex::new(
                 censor::Standard - "ass" - "cock" - "pussy" - "fuck" - "piss" - "shit",
             ),
             queue,
@@ -216,7 +217,7 @@ pub fn start_tts_thread(
                                     // TODO: avoid this allocation
                                     if state.enable_tts && message.text().starts_with(&format!("!{} ", state.command_name)) {
                                         if let Some(request) = parse_tts_request(&message.text()[state.command_name.len() + 2..]) {
-                                            if !ctx.banned_words.lock().expect("UI thread panicked, might as well join it").check(&request.text) {
+                                            if !ctx.banned_words.lock().await.check(&request.text) {
                                                 tokio::spawn(make_tts_request(ctx.clone(), request));
                                             }
                                         }

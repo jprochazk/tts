@@ -35,7 +35,6 @@ impl State {
             .and_then(|c| c.strip_prefix('`'))
             .and_then(|c| c.strip_suffix('`'))
         {
-            println!("{}", content);
             if let Ok(state) = serde_json::from_str(&content) {
                 return state;
             }
@@ -72,7 +71,6 @@ pub struct App {
     bc: Arc<Mutex<bc::Broadcaster>>,
     state: State,
 
-    _channel_name_timer: Option<Timer>,
     _clipboard_text_timer: Timer,
     _save_text_timer: Timer,
 }
@@ -92,7 +90,6 @@ impl App {
             bc,
             state,
 
-            _channel_name_timer: None,
             _clipboard_text_timer: Timer::new(),
             _save_text_timer: Timer::new(),
         }
@@ -192,22 +189,10 @@ impl epi::App for App {
                             egui::TextEdit::singleline(&mut self.state.channel)
                                 .hint_text("Channel name"),
                         )
-                        .changed()
-                    {
-                        self.state.channel.truncate(128);
-                        if !self.state.channel.is_empty() {
-                            self._channel_name_timer = Some(Timer::new());
-                        }
-                    }
-
-                    if self
-                        ._channel_name_timer
-                        .as_ref()
-                        .map(|t| t.elapsed_milliseconds(1000))
-                        .unwrap_or(false)
+                        .has_focus()
+                        && ui.input().key_pressed(egui::Key::Enter)
                     {
                         self.tts.update_tts_config(self.state.clone());
-                        self._channel_name_timer = None;
                     }
 
                     if ui

@@ -32,6 +32,12 @@ pub fn get_config_file_path() -> PathBuf {
     path
 }
 
+fn get_log_file_path() -> PathBuf {
+    let mut path = get_config_dir_path();
+    path.push("tts.log");
+    path
+}
+
 fn load_state() -> State {
     if let Ok(file) = std::fs::read_to_string(get_config_file_path()) {
         State::load(file)
@@ -76,10 +82,53 @@ fn init_panic_hook() {
     }));
 }
 
+fn init_logger() {
+    fn get_logger_options() -> alto_logger::Options {
+        alto_logger::Options::default()
+            .with_time(alto_logger::TimeConfig::relative_now())
+            .with_style(alto_logger::StyleConfig::SingleLine)
+    }
+
+    if std::env::var("RUST_LOG").is_err() {
+        std::env::set_var("RUST_LOG", "info");
+    }
+
+    if cfg!(debug_assertions) {
+        alto_logger::TermLogger::new(get_logger_options())
+            .unwrap()
+            .init()
+            .unwrap();
+    } else {
+        match std::fs::OpenOptions::new()
+            .append(true)
+            .create(true)
+            .open(get_log_file_path())
+        {
+            Ok(file) => {
+                alto_logger::FileLogger::new(get_logger_options(), file)
+                    .init()
+                    .unwrap();
+            }
+            Err(e) => {
+                alto_logger::TermLogger::new(get_logger_options())
+                    .unwrap()
+                    .init()
+                    .unwrap();
+                log::error!("Failed to open the log file: {}", e);
+            }
+        }
+    }
+
+    log::info!(
+        "Started the logger at {}. The following timestamps are relative to this value.",
+        chrono::Local::now()
+    );
+}
+
 fn main() -> Result<()> {
     init_panic_hook();
     init_config_dir();
-    env_logger::init();
+    init_logger();
 
     let state = load_state();
     let broadcaster = Arc::new(Mutex::new(Broadcaster::default()));
