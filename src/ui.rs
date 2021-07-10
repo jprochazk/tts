@@ -13,7 +13,6 @@ pub struct State {
     pub command_name: String,
     pub command_cooldown: String,
     pub enable_tts: bool,
-    pub pause_tts_queue: bool,
 }
 
 impl Default for State {
@@ -24,7 +23,6 @@ impl Default for State {
             command_name: "tts".to_string(),
             command_cooldown: "0".to_string(),
             enable_tts: true,
-            pause_tts_queue: false,
         }
     }
 }
