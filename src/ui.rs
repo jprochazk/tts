@@ -192,6 +192,7 @@ impl epi::App for App {
                         .has_focus()
                         && ui.input().key_pressed(egui::Key::Enter)
                     {
+                        log::info!("update");
                         self.tts.update_tts_config(self.state.clone());
                     }
 
@@ -275,6 +276,7 @@ pub fn start(
         Box::new(App::new(rt, tts, msg, bc, state)),
         eframe::NativeOptions {
             initial_window_size: Some(egui::Vec2::new(400., 350.)),
+            drag_and_drop_support: false,
             ..Default::default()
         },
     );

@@ -5,13 +5,11 @@ use std::{
     thread::JoinHandle,
 };
 
-use rodio::{Decoder, Sink};
-use tokio::sync::watch::{Receiver, Sender};
+use tokio::sync::watch;
 use twitch::Message;
 
 use crate::ui;
 
-//
 pub const TTS_REQUESTS_PER_MINUTE: u32 = 5;
 pub const RETRY_ATTEMPTS: u8 = 3;
 pub const API_TIMEOUT_SECONDS: u64 = 180;
@@ -28,13 +26,13 @@ pub struct TtsContext {
     >,
     pub banned_words: tokio::sync::Mutex<censor::Censor>,
     pub queue: rodio::Sink,
-    state_tx: Sender<ui::State>,
-    state_rx: Receiver<ui::State>,
+    state_tx: watch::Sender<ui::State>,
+    state_rx: watch::Receiver<ui::State>,
     client: reqwest::Client,
 }
 
 impl TtsContext {
-    pub fn new(queue: Sink) -> Self {
+    pub fn new(queue: rodio::Sink) -> Self {
         let (state_tx, state_rx) = tokio::sync::watch::channel(ui::State::default());
         Self {
             tts_limit: governor::RateLimiter::direct(governor::Quota::per_minute(
@@ -128,7 +126,7 @@ pub async fn make_tts_request(ctx: TtsCtx, request: TtsRequest) {
             continue;
         }
 
-        match Decoder::new(BufReader::new(Cursor::new(bytes.unwrap().to_vec()))) {
+        match rodio::Decoder::new(BufReader::new(Cursor::new(bytes.unwrap().to_vec()))) {
             Ok(audio) => {
                 log::info!("Successfully decoded the audio, queueing...");
                 ctx.queue.append(audio);
@@ -201,11 +199,11 @@ pub fn start_tts_thread(
                             );
 
                             if new_state.channel != state.channel && !new_state.channel.is_empty() {
-                                log::info!("Leaving the previous channel `{}`", state.channel);
                                 conn.sender.part(&state.channel).await.expect("Failed to leave the channel");
+                                log::info!("Left channel `{}`", state.channel);
 
-                                log::info!("Joining the new channel: `{}`", new_state.channel);
                                 conn.sender.join(&new_state.channel).await.expect("Failed to join the new channel");
+                                log::info!("Joined channel: `{}`", new_state.channel);
                             }
 
                             state = new_state;
