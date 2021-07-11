@@ -1,6 +1,5 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-mod bc;
 mod msg;
 mod server;
 mod speakers;
@@ -10,8 +9,6 @@ mod ui;
 use std::{path::PathBuf, sync::Arc};
 
 use anyhow::Result;
-use bc::Broadcaster;
-use tokio::sync::Mutex;
 use ui::State;
 
 pub fn get_config_dir_path() -> PathBuf {
@@ -131,7 +128,6 @@ fn main() -> Result<()> {
     init_logger();
 
     let state = load_state();
-    let broadcaster = Arc::new(Mutex::new(Broadcaster::default()));
     let (stop_server_tx, stop_server_rx) = tokio::sync::oneshot::channel::<()>();
     let (stop_tts_tx, stop_tts_rx) = tokio::sync::mpsc::channel::<()>(1);
     let (msg_send, msg_recv) = msg::channel();
@@ -143,13 +139,12 @@ fn main() -> Result<()> {
             .expect("Failed to build runtime"),
     );
     let server = std::thread::spawn({
-        let broadcaster = broadcaster.clone();
         let rt = rt.clone();
         move || {
             log::info!("Started the authentication thread.");
             rt.block_on(async {
                 tokio::select! {
-                    _ = server::start(msg_send, broadcaster) => {}
+                    _ = server::start(msg_send) => {}
                     _ = stop_server_rx => {}
                 }
             })
@@ -165,7 +160,7 @@ fn main() -> Result<()> {
     let tts_context = Arc::new(tts::TtsContext::new(sink));
     let tts = tts::start_tts_thread(tts_context.clone(), rt.clone(), stop_tts_rx);
 
-    ui::start(rt, tts_context, msg_recv, broadcaster, state);
+    ui::start(rt, tts_context, msg_recv, state);
 
     stop_server_tx.send(()).unwrap();
     let _ = stop_tts_tx.try_send(()); // we don't care if the thread has panicked

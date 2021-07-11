@@ -1,10 +1,8 @@
+use crate::msg;
 use chrono::{DateTime, Duration, Utc};
 use eframe::{egui, epi};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use tokio::sync::Mutex;
-
-use crate::{bc, msg};
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct State {
@@ -35,7 +33,7 @@ impl State {
             .and_then(|c| c.strip_prefix('`'))
             .and_then(|c| c.strip_suffix('`'))
         {
-            if let Ok(state) = serde_json::from_str(&content) {
+            if let Ok(state) = serde_json::from_str(content) {
                 return state;
             }
         }
@@ -68,7 +66,6 @@ pub struct App {
     rt: Arc<tokio::runtime::Runtime>,
     tts: crate::tts::TtsCtx,
     msg: msg::Receiver,
-    bc: Arc<Mutex<bc::Broadcaster>>,
     state: State,
 
     _clipboard_text_timer: Timer,
@@ -80,14 +77,12 @@ impl App {
         rt: Arc<tokio::runtime::Runtime>,
         tts: crate::tts::TtsCtx,
         msg: msg::Receiver,
-        bc: Arc<Mutex<bc::Broadcaster>>,
         state: State,
     ) -> App {
         App {
             rt,
             tts,
             msg,
-            bc,
             state,
 
             _clipboard_text_timer: Timer::new(),
@@ -123,14 +118,6 @@ impl App {
         let config = serde_json::to_string(&self.state).expect("Failed to serialize config");
         std::fs::write(crate::get_config_file_path(), State::save(&config))
             .expect("Failed to write config to a file");
-        self.rt.block_on(async {
-            self.bc
-                .lock()
-                .await
-                .broadcast(bc::Message::Config(config))
-                .await
-                .expect("Failed to broadcast config");
-        });
     }
 }
 
@@ -268,12 +255,11 @@ pub fn start(
     rt: Arc<tokio::runtime::Runtime>,
     tts: crate::tts::TtsCtx,
     msg: msg::Receiver,
-    bc: Arc<Mutex<bc::Broadcaster>>,
     state: State,
 ) {
     log::info!("Started the ui thread.");
     eframe::run_native(
-        Box::new(App::new(rt, tts, msg, bc, state)),
+        Box::new(App::new(rt, tts, msg, state)),
         eframe::NativeOptions {
             initial_window_size: Some(egui::Vec2::new(400., 350.)),
             drag_and_drop_support: false,

@@ -1,14 +1,12 @@
+use crate::ui;
 use std::{
     io::{BufReader, Cursor},
     num::NonZeroU32,
     sync::Arc,
     thread::JoinHandle,
 };
-
 use tokio::sync::watch;
 use twitch::Message;
-
-use crate::ui;
 
 pub const TTS_REQUESTS_PER_MINUTE: u32 = 5;
 pub const RETRY_ATTEMPTS: u8 = 3;
