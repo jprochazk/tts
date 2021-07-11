@@ -2,28 +2,22 @@
 
 mod bc;
 mod msg;
-mod proxy;
 mod server;
+mod speakers;
+mod tts;
 mod ui;
 
-use std::{os::unix::prelude::PermissionsExt, path::PathBuf, sync::Arc};
+use std::{path::PathBuf, sync::Arc};
 
 use anyhow::Result;
 use bc::Broadcaster;
-use proxy::start_proxy_control_thread;
 use tokio::sync::Mutex;
 use ui::State;
-
-#[cfg(target_family = "unix")]
-pub static PROXY_BINARY: &[u8] = include_bytes!("../target/release/obs-tts-proxy");
-
-#[cfg(target_family = "windows")]
-pub static PROXY_BINARY: &[u8] = include_bytes!("..\\target\\release\\obs-tts-proxy.exe");
 
 pub fn get_config_dir_path() -> PathBuf {
     let mut path = home::home_dir().expect("Failed to access CWD");
     // Use the .config directory convention if it is present.
-    if path.join(".config").exists() {
+    if cfg!(target_family = "unix") && path.join(".config").exists() {
         path.push(".config");
         path.push("obs_tts_config");
     } else {
@@ -38,19 +32,9 @@ pub fn get_config_file_path() -> PathBuf {
     path
 }
 
-pub fn get_html_file_path() -> PathBuf {
+fn get_log_file_path() -> PathBuf {
     let mut path = get_config_dir_path();
-    path.push("tts.html");
-    path
-}
-
-fn get_proxy_binary_path() -> PathBuf {
-    let mut path = get_config_dir_path();
-    path.push(if cfg!(target_os = "windows") {
-        "obs-tts-proxy.exe"
-    } else {
-        "obs-tts-proxy"
-    });
+    path.push("tts.log");
     path
 }
 
@@ -64,33 +48,9 @@ fn load_state() -> State {
 
 fn init_config_dir() {
     let path = get_config_dir_path();
-
     if !path.exists() {
         std::fs::create_dir(&path).unwrap();
     }
-
-    std::fs::write(get_html_file_path(), include_str!("./tts.html")).unwrap();
-
-    let version_path = path.join("version.txt");
-    let version =
-        std::fs::read_to_string(&version_path).unwrap_or_else(|_| "<not-present>".to_string());
-
-    let binary = get_proxy_binary_path();
-    if !binary.exists() || version != env!("CARGO_PKG_VERSION") {
-        std::fs::write(&binary, PROXY_BINARY).unwrap();
-
-        #[cfg(any(target_os = "linux", target_os = "macos"))]
-        {
-            let mut perms = std::fs::metadata(&binary).unwrap().permissions();
-            // 7 = read, write, execute (owner)
-            // 5 = read, execute (group)
-            // 5 = read, execute (other)
-            perms.set_mode(0o755);
-            std::fs::set_permissions(binary, perms).expect("Failed to make the proxy executable.");
-        }
-    }
-
-    std::fs::write(version_path, env!("CARGO_PKG_VERSION")).unwrap();
 }
 
 fn init_panic_hook() {
@@ -122,12 +82,58 @@ fn init_panic_hook() {
     }));
 }
 
+fn init_logger() {
+    fn get_logger_options() -> alto_logger::Options {
+        alto_logger::Options::default()
+            .with_time(alto_logger::TimeConfig::relative_now())
+            .with_style(alto_logger::StyleConfig::SingleLine)
+    }
+
+    if std::env::var("RUST_LOG").is_err() {
+        std::env::set_var("RUST_LOG", "info");
+    }
+
+    if cfg!(debug_assertions) {
+        alto_logger::TermLogger::new(get_logger_options())
+            .unwrap()
+            .init()
+            .unwrap();
+    } else {
+        match std::fs::OpenOptions::new()
+            .append(true)
+            .create(true)
+            .open(get_log_file_path())
+        {
+            Ok(file) => {
+                alto_logger::FileLogger::new(get_logger_options(), file)
+                    .init()
+                    .unwrap();
+            }
+            Err(e) => {
+                alto_logger::TermLogger::new(get_logger_options())
+                    .unwrap()
+                    .init()
+                    .unwrap();
+                log::error!("Failed to open the log file: {}", e);
+            }
+        }
+    }
+
+    log::info!(
+        "Started the logger at {}. The following timestamps are relative to this value.",
+        chrono::Local::now()
+    );
+}
+
 fn main() -> Result<()> {
     init_panic_hook();
     init_config_dir();
+    init_logger();
+
     let state = load_state();
     let broadcaster = Arc::new(Mutex::new(Broadcaster::default()));
-    let (stop, stop_recv) = tokio::sync::oneshot::channel::<()>();
+    let (stop_server_tx, stop_server_rx) = tokio::sync::oneshot::channel::<()>();
+    let (stop_tts_tx, stop_tts_rx) = tokio::sync::mpsc::channel::<()>(1);
     let (msg_send, msg_recv) = msg::channel();
 
     let rt = Arc::new(
@@ -140,25 +146,32 @@ fn main() -> Result<()> {
         let broadcaster = broadcaster.clone();
         let rt = rt.clone();
         move || {
+            log::info!("Started the authentication thread.");
             rt.block_on(async {
                 tokio::select! {
                     _ = server::start(msg_send, broadcaster) => {}
-                    _ = stop_recv => {}
+                    _ = stop_server_rx => {}
                 }
-                Result::<()>::Ok(())
             })
         }
     });
-    ui::start(
-        rt.clone(),
-        msg_recv,
-        broadcaster,
-        state,
-        start_proxy_control_thread(rt, 3031),
-    );
 
-    stop.send(()).unwrap();
-    server.join().unwrap().unwrap();
+    // QQQ: how should we handle the absence of the default output device?
+    let (_stream, stream_handle) =
+        rodio::OutputStream::try_default().expect("Couldn't connect to the default output device");
+    let sink = rodio::Sink::try_new(&stream_handle).unwrap();
+    sink.pause(); // pause by default
+
+    let tts_context = Arc::new(tts::TtsContext::new(sink));
+    let tts = tts::start_tts_thread(tts_context.clone(), rt.clone(), stop_tts_rx);
+
+    ui::start(rt, tts_context, msg_recv, broadcaster, state);
+
+    stop_server_tx.send(()).unwrap();
+    let _ = stop_tts_tx.try_send(()); // we don't care if the thread has panicked
+
+    server.join().unwrap();
+    tts.join().unwrap();
 
     Ok(())
 }

@@ -1,17 +1,9 @@
-cargo-features = ["strip"]
-
 [package]
 name = "gui"
 version = "0.1.0"
 edition = "2018"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
-
-[workspace]
-members = [
-    '.',
-    'tts-proxy'
-]
 
 [dependencies]
 eframe = "0.13.1"
@@ -24,15 +16,16 @@ open = "1"
 crossbeam-channel = "0.5"
 futures = "0.3"
 home = "0.5.3"
-chrono = "0.4"
+chrono = "0.4.19"
 backtrace = "0.3.60"
 lazy_static = "1.4.0"
-clipboard = "0.5.0"
+rodio = "0.14.0"
+twitch = { git = "https://github.com/jprochazk/twitch-rs" }
+governor = "0.3.2"
+censor = "0.2.0"
+log = "0.4.14"
+reqwest = { version = "0.11.4", features = ["json"] }
+alto_logger = "0.3.7"
 
 [target.'cfg(windows)'.build-dependencies]
 winres = "0.1"
-
-
-[profile.release]
-strip = true
-
