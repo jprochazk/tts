@@ -1,8 +1,5 @@
-# Example: Svelte + TypeScript
+# TTS
 
-- 📚 [Svelte](https://svelte.dev/)
-- 📚 [TypeScript](https://www.typescriptlang.org/)
+Simple app for Twitch TTS triggered via a chat command, bits or channel point redeem.
 
-## Configuration
-
-- [`@tsconfig/svelte`](https://www.npmjs.com/package/@tsconfig/svelte)
+Uses [vo.codes](https://vo.codes/) for speech synthesis, which contains a large library of voices.
