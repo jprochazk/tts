@@ -1,7 +1,8 @@
-# OBS TTS
+# Example: Svelte + TypeScript
 
-A TTS based on [vo.codes](https://vo.codes/). It runs as a browser source in OBS, and listens to commands in your twitch chat, or channel point redeems in your channel.
+- 📚 [Svelte](https://svelte.dev/)
+- 📚 [TypeScript](https://www.typescriptlang.org/)
 
-#### Todo
+## Configuration
 
-MacOS builds (maybe): https://github.com/joseluisq/rust-linux-darwin-builder
+- [`@tsconfig/svelte`](https://www.npmjs.com/package/@tsconfig/svelte)
