@@ -1,6 +1,4 @@
 {
-  "git.ignoreLimitWarning": true,
-  "css.lint.unknownAtRules": "ignore",
   "[typescript]": {
     "editor.defaultFormatter": "esbenp.prettier-vscode"
   },
@@ -18,5 +16,6 @@
   },
   "[markdown]": {
     "editor.defaultFormatter": "esbenp.prettier-vscode"
-  }
+  },
+  "svelte.plugin.css.diagnostics.enable": false
 }
