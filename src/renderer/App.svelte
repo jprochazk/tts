@@ -1,11 +1,17 @@
-<script lang="typescript">
-  let count: number = 0;
-  $: large = count > 10;
+<script lang="ts">
+  import Counter from "./Counter.svelte";
+
+  let count: number = 20;
   $: double = count * 2;
 </script>
 
-<span>{count} * 2 = {double}, which is {large ? "large" : "small"}</span><br />
-<button on:click={() => (count += 1)}>+</button>
+<div class="container">
+  <Counter start={count} step={2} on:change={(e) => (count = e.detail.value)} />
+  <div>
+    <span>Count: {count}</span><br />
+    <span>Double: {double}</span>
+  </div>
+</div>
 
 <style global>
   @tailwind base;
