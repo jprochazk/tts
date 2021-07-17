@@ -3524,6 +3524,11 @@ matcher@^3.0.0:
   dependencies:
     escape-string-regexp "^4.0.0"
 
+"material-icons@npm:@jprochazk/svelte-material-icons@^0.0.3":
+  version "0.0.3"
+  resolved "https://registry.yarnpkg.com/@jprochazk/svelte-material-icons/-/svelte-material-icons-0.0.3.tgz#ca305a0e2b6441abbec071d7c9962553f318e57b"
+  integrity sha512-4cEbcv9j20rfddxBeZw8h+V6jeod0u2W69HVzpl3saWuo5mvmRbTil/xU92Iu3aU6R64uf6LFHjrdmoF9EmFfA==
+
 mdn-data@2.0.14:
   version "2.0.14"
   resolved "https://registry.yarnpkg.com/mdn-data/-/mdn-data-2.0.14.tgz#7113fc4281917d63ce29b43446f701e68c25ba50"

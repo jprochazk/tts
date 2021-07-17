@@ -1,5 +1,6 @@
 <script lang="ts">
   import Counter from "./Counter.svelte";
+  import Translate from "material-icons/GoogleTranslate.svelte";
 
   let count: number = 20;
   $: double = count * 2;
@@ -12,6 +13,7 @@
     <span>Double: {double}</span>
   </div>
 </div>
+<Translate />
 
 <style global>
   @tailwind base;

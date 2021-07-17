@@ -1,5 +1,7 @@
 <script lang="ts">
   import { createEventDispatcher } from "svelte";
+  import Plus from "material-icons/Plus.svelte";
+  import Minus from "material-icons/Minus.svelte";
 
   export let start: number = 0;
   export let step: number = 1;
@@ -19,6 +21,6 @@
 </script>
 
 <div>
-  <button on:click={increment}>+</button>
-  <button on:click={decrement}>-</button>
+  <button on:click={increment}><Plus /></button>
+  <button on:click={decrement}><Minus /></button>
 </div>

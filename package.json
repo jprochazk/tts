@@ -32,7 +32,8 @@
     "prettier-plugin-svelte": "^2.3.1",
     "svelte-preprocess": "^4.7.4",
     "tailwindcss": "^2.2.4",
-    "typescript": "^4.3.5"
+    "typescript": "^4.3.5",
+    "material-icons": "npm:@jprochazk/svelte-material-icons@^0.0.3"
   },
   "build": {
     "extends": "electron-snowpack/config/electron-builder.js"
