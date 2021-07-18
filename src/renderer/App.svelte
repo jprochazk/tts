@@ -1,9 +1,13 @@
 <script lang="ts">
   import Counter from "./Counter.svelte";
-  import Translate from "material-icons/GoogleTranslate.svelte";
+  import CloudSyncIcon from "material-icons/CloudSyncOutline.svelte";
 
   let count: number = 20;
   $: double = count * 2;
+
+  async function test() {
+    console.log(await window.api.test());
+  }
 </script>
 
 <div class="container">
@@ -12,8 +16,10 @@
     <span>Count: {count}</span><br />
     <span>Double: {double}</span>
   </div>
+  <button on:click={test}>
+    <CloudSyncIcon />
+  </button>
 </div>
-<Translate />
 
 <style global>
   @tailwind base;
